@@ -22,6 +22,7 @@ import { renderTickets } from './pages/tickets.js';
 import { renderEmergency } from './pages/emergency.js';
 import { renderFinance } from './pages/finance.js';
 import { renderKpi } from './pages/kpi.js';
+import { renderAiSettings } from './pages/ai-settings.js';
 
 // 全局数据状态（暴露到 window 供页面访问）
 window.OPC = {
@@ -162,7 +163,9 @@ const router = {
   tickets: renderTickets,
   emergency: renderEmergency,
   finance: renderFinance,
-  kpi: renderKpi
+  kpi: renderKpi,
+  // AI 配置中心（横跨学习+运营）
+  'ai-settings': renderAiSettings
 };
 
 function render() {

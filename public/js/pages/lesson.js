@@ -6,6 +6,7 @@
 import { html } from '../utils.js';
 import { courseDetails, ensureBlocks } from '../data/course-details.js';
 import { trackLessons } from '../data/track-lessons.js';
+import { getRecipes, toolIcon } from '../data/ai-recipes.js';
 
 export function renderLesson(root, params) {
   const D = window.OPC.data;
@@ -99,6 +100,24 @@ export function renderLesson(root, params) {
       };
       document.getElementById('save-note').onclick = save;
       ta.addEventListener('keydown', e => { if (e.ctrlKey && e.key === 'Enter') save(); });
+    } else if (activeTab === 'recipe') {
+      const recipes = getRecipes(view.id, view.title);
+      c.innerHTML = `
+        <div style="background:linear-gradient(135deg,#eef2ff,#fae8ff);padding:14px 16px;border-radius:10px;margin-bottom:14px;font-size:13px;color:var(--text-secondary);">
+          💡 本节配套 <b>${recipes.length}</b> 个 AI 操作配方，每个含<b>具体工具</b>、<b>提示词模板</b>、<b>操作步骤</b>。配置好 <a onclick="OPC.go('ai-settings')" style="cursor:pointer;color:var(--primary);font-weight:600;">AI 配置中心</a> 后可<b>一键真实运行</b>，未配置则展示渲染后的提示词。
+        </div>
+        ${recipes.map((re, idx) => renderRecipeCard(re, idx, view)).join('')}
+      `;
+      // 绑定按钮
+      recipes.forEach((re, idx) => {
+        const cid = `recipe-${idx}`;
+        document.getElementById(cid + '-copy')?.addEventListener('click', () => {
+          const txt = renderPromptWithVars(re, idx);
+          navigator.clipboard.writeText(txt);
+          OPC.toast('提示词已复制到剪贴板', 'success');
+        });
+        document.getElementById(cid + '-run')?.addEventListener('click', () => runRecipe(re, idx, view));
+      });
     } else if (activeTab === 'ai') {
       c.innerHTML = `
         <div style="display:flex;flex-direction:column;height:60vh;background:var(--bg);border-radius:12px;">
@@ -106,7 +125,7 @@ export function renderLesson(root, params) {
             ${chatMessages.map(m => `
               <div class="chat-msg ${m.role === 'user' ? 'user' : ''}">
                 <div class="chat-avatar">${m.role === 'user' ? 'U' : '🤖'}</div>
-                <div class="chat-bubble">${m.text}</div>
+                <div class="chat-bubble">${m.text.replace(/\n/g, '<br>')}</div>
               </div>`).join('')}
           </div>
           <div style="padding:8px 12px;display:flex;gap:6px;flex-wrap:wrap;">
@@ -115,7 +134,7 @@ export function renderLesson(root, params) {
             ).join('')}
           </div>
           <div class="chat-input-bar">
-            <input id="chat-input" placeholder="向 AI 助教提问..." onkeypress="if(event.key==='Enter')OPC.askAI(this.value)">
+            <input id="chat-input" placeholder="向 AI 助教提问（已接入真实 AI，需配置 Key）..." onkeypress="if(event.key==='Enter')OPC.askAI(this.value)">
             <button class="btn btn-primary" onclick="OPC.askAI(document.getElementById('chat-input').value)">发送</button>
           </div>
         </div>`;
@@ -161,16 +180,38 @@ export function renderLesson(root, params) {
   OPC.askAI = async (text) => {
     if (!text || !text.trim()) return;
     chatMessages.push({ role: 'user', text });
+    // 显示"正在思考"
+    chatMessages.push({ role: 'ai', text: '⏳ AI 正在思考...' });
     renderTab();
     const inp = document.getElementById('chat-input'); if (inp) inp.value = '';
-    const reply = await OPC.api('/ai/chat', 'POST', { lessonId: view.id, message: text });
-    const answer = (reply && reply.data && reply.data.reply) || mockAIReply(text, view);
-    setTimeout(() => {
+
+    // 构造系统提示词 + 课时上下文
+    const tools = (view.tools || []).join('、');
+    const systemPrompt = `你是 OPC 学院的 AI 助教，擅长把 AI 工具用到学员的真实业务场景中。当前学员正在学习课时《${view.title}》${view.subtitle ? '（' + view.subtitle + '）' : ''}。\n本节学习目标：${(view.objectives || []).join('；')}。\n本节涉及工具：${tools || '通用 AI 工具'}。\n本节产出物：${view.deliverable || '本节小作品'}。\n请结构化、简明、可执行地回答，多用分点和具体工具名称。`;
+    const lessonContext = `课时标题：${view.title}；课时ID：${view.id}；推荐工具：${tools}`;
+
+    const history = chatMessages.slice(0, -2)
+      .filter(m => m.text && !m.text.startsWith('⏳'))
+      .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text }));
+
+    try {
+      const reply = await OPC.api('/ai/chat', 'POST', {
+        lessonId: view.id, message: text, systemPrompt, lessonContext, history
+      });
+      const answer = (reply && reply.success && reply.data && reply.data.reply)
+        ? reply.data.reply
+        : (reply && reply.message ? '⚠️ ' + reply.message : mockAIReply(text, view));
+      // 替换"正在思考"
+      chatMessages.pop();
       chatMessages.push({ role: 'ai', text: answer });
       renderTab();
       const area = document.getElementById('chat-area');
       if (area) area.scrollTop = area.scrollHeight;
-    }, 400);
+    } catch (e) {
+      chatMessages.pop();
+      chatMessages.push({ role: 'ai', text: '❌ 调用失败：' + e.message });
+      renderTab();
+    }
   };
 
   root.innerHTML = html`
@@ -212,6 +253,7 @@ export function renderLesson(root, params) {
       <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;gap:4px;">
         ${[
           { k: 'content', n: '📖 课程内容' },
+          { k: 'recipe', n: '🛠️ AI 操作配方' },
           { k: 'note', n: '📝 学习笔记' },
           { k: 'ai', n: '🤖 AI 助教' },
           { k: 'quiz', n: '📋 知识检测' }
@@ -339,6 +381,130 @@ function resolveLesson(params, D) {
     prev: null,
     next: D.baseLessons[1] ? { title: D.baseLessons[1].title, params: { lessonId: D.baseLessons[1].id } } : null
   };
+}
+
+// ============== AI 配方渲染 ==============
+// 把变量值渲染到提示词模板
+function renderPromptWithVars(recipe, idx) {
+  let prompt = recipe.prompt || '';
+  (recipe.variables || []).forEach(v => {
+    const input = document.getElementById(`recipe-${idx}-var-${v.name}`);
+    const val = (input && input.value) || v.placeholder || '';
+    prompt = prompt.split('{' + v.name + '}').join(val);
+  });
+  return prompt;
+}
+
+function renderRecipeCard(re, idx, view) {
+  const cid = `recipe-${idx}`;
+  const cat = ({
+    text: '📝 文本', image: '🎨 视觉', video: '🎬 视频', audio: '🎙️ 音频',
+    agent: '🤝 智能体', code: '💻 代码', data: '📊 数据'
+  })[re.category] || '🛠️';
+  const diff = '⭐'.repeat(Math.min(re.difficulty || 1, 5));
+
+  return `
+    <div class="card" style="margin-bottom:14px;border-left:4px solid var(--primary);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+        <div style="flex:1;min-width:250px;">
+          <h3 style="margin:0;font-size:17px;">
+            ${toolIcon(re.tool)} ${re.title}
+          </h3>
+          <div style="margin-top:6px;font-size:13px;color:var(--text-secondary);display:flex;gap:10px;flex-wrap:wrap;">
+            <span><b>主力：</b>${re.tool}</span>
+            ${re.alternatives && re.alternatives.length ? `<span><b>替代：</b>${re.alternatives.join(' / ')}</span>` : ''}
+            <span>${cat}</span>
+            <span>难度 ${diff}</span>
+            <span>💰 ${re.cost || '免费'}</span>
+          </div>
+        </div>
+      </div>
+
+      ${re.steps && re.steps.length ? `
+      <div style="margin:10px 0;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;">📋 操作步骤</div>
+        <ol style="margin:0;padding-left:20px;font-size:13.5px;line-height:1.8;color:var(--text-secondary);">
+          ${re.steps.map(s => `<li>${s}</li>`).join('')}
+        </ol>
+      </div>` : ''}
+
+      ${re.variables && re.variables.length ? `
+      <div style="margin:10px 0;padding:10px;background:var(--bg-hover);border-radius:8px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">✏️ 填入你的变量（变量值会自动替换到提示词的 {var} 占位）</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;">
+          ${re.variables.map(v => `
+            <div>
+              <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:2px;">${v.label || v.name}</label>
+              <input id="${cid}-var-${v.name}" class="form-input" style="font-size:13px;" placeholder="${v.placeholder || ''}" />
+            </div>
+          `).join('')}
+        </div>
+      </div>` : ''}
+
+      <div style="margin:10px 0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-size:13px;font-weight:600;">💬 提示词模板</span>
+          <div style="display:flex;gap:6px;">
+            <button id="${cid}-copy" class="btn btn-sm" title="复制提示词"><i class="fa-solid fa-copy"></i> 复制</button>
+            <button id="${cid}-run" class="btn btn-sm btn-primary" title="一键调用 AI"><i class="fa-solid fa-bolt"></i> 一键运行</button>
+          </div>
+        </div>
+        <pre style="background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word;max-height:280px;overflow:auto;font-family:'JetBrains Mono','Cascadia Code',Consolas,monospace;">${escapeHtml(re.prompt || '')}</pre>
+      </div>
+
+      ${re.expected ? `<div style="font-size:13px;color:var(--text-secondary);margin:6px 0;"><b>📦 预期产出：</b>${re.expected}</div>` : ''}
+      ${re.tips && re.tips.length ? `
+      <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:8px 12px;border-radius:6px;margin-top:8px;font-size:13px;">
+        <b style="color:#92400e;">💡 关键提示：</b>
+        <ul style="margin:4px 0 0;padding-left:18px;color:#78350f;">${re.tips.map(t => `<li>${t}</li>`).join('')}</ul>
+      </div>` : ''}
+
+      <div id="${cid}-result" style="margin-top:10px;"></div>
+    </div>
+  `;
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+async function runRecipe(re, idx, view) {
+  const cid = `recipe-${idx}`;
+  const result = document.getElementById(cid + '-result');
+  if (!result) return;
+  result.innerHTML = `<div style="background:var(--bg-hover);padding:12px;border-radius:8px;color:var(--text-muted);font-size:13px;">⏳ AI 正在生成，请稍候 5-30 秒...</div>`;
+
+  // 收集变量
+  const variables = {};
+  (re.variables || []).forEach(v => {
+    const input = document.getElementById(`${cid}-var-${v.name}`);
+    variables[v.name] = (input && input.value) || v.placeholder || '';
+  });
+
+  try {
+    const resp = await OPC.api('/ai/recipe/run', 'POST', {
+      promptTemplate: re.prompt || '',
+      variables,
+      lessonTitle: view.title,
+      toolName: re.tool
+    });
+    if (resp && resp.success && resp.data) {
+      const d = resp.data;
+      result.innerHTML = `
+        <div style="background:#f0fdf4;border:1px solid #86efac;padding:12px;border-radius:8px;">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#166534;margin-bottom:8px;">
+            <span>✅ AI 生成结果 · 模型 <code>${d.model || '-'}</code> · Provider <code>${d.provider || '-'}</code></span>
+            <button class="btn btn-sm" onclick="navigator.clipboard.writeText(this.parentElement.nextElementSibling.textContent);OPC.toast('已复制','success')"><i class="fa-solid fa-copy"></i> 复制结果</button>
+          </div>
+          <div style="background:white;padding:12px;border-radius:6px;white-space:pre-wrap;font-size:13.5px;line-height:1.7;color:#111;max-height:500px;overflow:auto;">${escapeHtml(d.output || '(无返回)')}</div>
+        </div>
+      `;
+    } else {
+      result.innerHTML = `<div style="background:#fef2f2;border:1px solid #fca5a5;padding:10px;border-radius:8px;color:#991b1b;">❌ ${(resp && resp.message) || '调用失败'}<br><span style="font-size:12px;">提示：到 <a onclick="OPC.go('ai-settings')" style="cursor:pointer;color:var(--primary);">AI 配置中心</a> 配置 API Key 后即可获得真实 AI 结果。</span></div>`;
+    }
+  } catch (e) {
+    result.innerHTML = `<div style="background:#fef2f2;border:1px solid #fca5a5;padding:10px;border-radius:8px;color:#991b1b;">❌ ${e.message}</div>`;
+  }
 }
 
 function mockAIReply(text, view) {

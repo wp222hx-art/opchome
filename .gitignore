@@ -2,3 +2,4 @@ node_modules/
 server/db.json
 *.log
 .DS_Store
+server/providers.json
