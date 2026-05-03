@@ -28,26 +28,45 @@ function loadProviders() {
   try {
     if (!fs.existsSync(PROVIDERS_PATH)) {
       const init = {
-        defaultProvider: 'openai',
+        defaultProvider: 'tokenhot',
         providers: [
-          { id: 'openai', name: 'OpenAI / Compatible', baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o-mini', enabled: false, format: 'openai', notes: 'ChatGPT 官方/中转' },
-          { id: 'anthropic', name: 'Anthropic Claude', baseUrl: 'https://api.anthropic.com/v1', apiKey: '', model: 'claude-3-5-sonnet-20241022', enabled: false, format: 'anthropic', notes: 'Claude 系列' },
-          { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', apiKey: '', model: 'deepseek-chat', enabled: false, format: 'openai', notes: '国产高性价比' },
-          { id: 'qwen', name: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '', model: 'qwen-plus', enabled: false, format: 'openai', notes: '阿里云灵积' },
-          { id: 'moonshot', name: 'Kimi (Moonshot)', baseUrl: 'https://api.moonshot.cn/v1', apiKey: '', model: 'moonshot-v1-32k', enabled: false, format: 'openai', notes: '月之暗面 Kimi' },
-          { id: 'zhipu', name: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKey: '', model: 'glm-4-flash', enabled: false, format: 'openai', notes: 'GLM-4 系列' },
-          { id: 'doubao', name: '豆包 (火山方舟)', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', apiKey: '', model: '', enabled: false, format: 'openai', notes: '需填 endpoint id 作为 model' },
-          { id: 'gemini', name: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', apiKey: '', model: 'gemini-1.5-flash', enabled: false, format: 'gemini', notes: 'Google AI Studio' },
-          { id: 'custom', name: '自定义 (OpenAI兼容)', baseUrl: '', apiKey: '', model: '', enabled: false, format: 'openai', notes: '任意 OpenAI 兼容端点' }
+          {
+            id: 'tokenhot',
+            name: 'Tokenhot · 一站式 AI 网关',
+            baseUrl: 'https://api.tokenhot.ai/v1',
+            apiKey: '',
+            model: 'gpt-4o-mini',
+            enabled: true,
+            format: 'openai',
+            notes: '统一接入 100+ 大模型 (OpenAI / Claude / Gemini / DeepSeek / 通义 / Kimi 等)，OpenAI 兼容协议'
+          }
         ]
       };
       fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(init, null, 2));
       return init;
     }
-    return JSON.parse(fs.readFileSync(PROVIDERS_PATH, 'utf-8'));
+    const data = JSON.parse(fs.readFileSync(PROVIDERS_PATH, 'utf-8'));
+    // 兼容旧版本：如果只剩 Tokenhot 之外的 provider，统一迁移
+    if (!data.providers || !data.providers.find(p => p.id === 'tokenhot')) {
+      data.defaultProvider = 'tokenhot';
+      data.providers = [
+        {
+          id: 'tokenhot',
+          name: 'Tokenhot · 一站式 AI 网关',
+          baseUrl: 'https://api.tokenhot.ai/v1',
+          apiKey: '',
+          model: 'gpt-4o-mini',
+          enabled: true,
+          format: 'openai',
+          notes: '统一接入 100+ 大模型 (OpenAI / Claude / Gemini / DeepSeek / 通义 / Kimi 等)，OpenAI 兼容协议'
+        }
+      ];
+      fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(data, null, 2));
+    }
+    return data;
   } catch (e) {
     console.error('[Providers] load error', e);
-    return { defaultProvider: 'openai', providers: [] };
+    return { defaultProvider: 'tokenhot', providers: [] };
   }
 }
 function saveProviders(p) {
