@@ -173,8 +173,11 @@ app.put('/api/ai/providers/:id', (req, res) => {
   if (typeof enabled === 'boolean') p.enabled = enabled;
   if (typeof name === 'string') p.name = name.trim();
   if (typeof notes === 'string') p.notes = notes;
-  // 仅当传入非空且不是脱敏字符串时才更新 key
-  if (typeof apiKey === 'string' && apiKey && !apiKey.includes('****')) p.apiKey = apiKey.trim();
+  // 仅当传入非空且不是脱敏字符串时才更新 key；__CLEAR__ 表示清除
+  if (typeof apiKey === 'string') {
+    if (apiKey === '__CLEAR__') p.apiKey = '';
+    else if (apiKey && !apiKey.includes('****')) p.apiKey = apiKey.trim();
+  }
   saveProviders(providers);
   res.json(ok(sanitizeProviders(providers)));
 });
