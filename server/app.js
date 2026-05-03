@@ -191,6 +191,51 @@ app.post('/api/ai/providers/default', (req, res) => {
   res.json(ok(sanitizeProviders(providers)));
 });
 
+// 拉取某个 Provider 的可用模型列表（OpenAI 兼容协议 GET /models）
+app.get('/api/ai/providers/:id/models', async (req, res) => {
+  const p = providers.providers.find(x => x.id === req.params.id);
+  if (!p) return res.json(fail('provider not found'));
+  if (!p.apiKey) return res.json(fail('请先填写并保存 API Key'));
+  try {
+    const url = (p.baseUrl || '').replace(/\/+$/, '') + '/models';
+    const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + p.apiKey } });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data?.error?.message || JSON.stringify(data).slice(0, 300));
+    // OpenAI 标准: { data: [{ id, object, owned_by }, ...] }
+    const list = (data?.data || []).map(m => ({
+      id: m.id,
+      owned_by: m.owned_by || m.ownedBy || '',
+      group: classifyModel(m.id)
+    }));
+    // 按 group + id 排序
+    list.sort((a, b) => (a.group + a.id).localeCompare(b.group + b.id));
+    res.json(ok({ count: list.length, models: list }));
+  } catch (e) {
+    res.json(fail('拉取模型列表失败: ' + (e.message || e)));
+  }
+});
+
+// 简单分类，便于前端分组下拉
+function classifyModel(id) {
+  const s = (id || '').toLowerCase();
+  if (s.includes('gpt') || s.startsWith('o1') || s.startsWith('o3') || s.startsWith('o4')) return '🤖 OpenAI';
+  if (s.includes('claude')) return '📜 Anthropic Claude';
+  if (s.includes('gemini')) return '✨ Google Gemini';
+  if (s.includes('deepseek')) return '🐳 DeepSeek';
+  if (s.includes('qwen') || s.includes('tongyi')) return '🐻 通义千问';
+  if (s.includes('moonshot') || s.includes('kimi')) return '🌙 Kimi';
+  if (s.includes('glm')) return '💎 智谱 GLM';
+  if (s.includes('doubao') || s.includes('ep-')) return '🥟 豆包';
+  if (s.includes('grok')) return '⚡ xAI Grok';
+  if (s.includes('llama')) return '🦙 Llama';
+  if (s.includes('mistral') || s.includes('mixtral')) return '🌪️ Mistral';
+  if (s.includes('dall-e') || s.includes('flux') || s.includes('midjourney') || s.includes('sd') || s.includes('stable')) return '🎨 图像生成';
+  if (s.includes('sora') || s.includes('kling') || s.includes('runway')) return '🎬 视频生成';
+  if (s.includes('suno') || s.includes('whisper') || s.includes('tts') || s.includes('eleven')) return '🎵 音频/语音';
+  if (s.includes('embedding')) return '🧮 Embedding';
+  return '🧠 其他';
+}
+
 // 测试某个 Provider 连通性
 app.post('/api/ai/providers/:id/test', async (req, res) => {
   const p = providers.providers.find(x => x.id === req.params.id);

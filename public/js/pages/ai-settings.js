@@ -94,13 +94,18 @@ export function renderAiSettings(root) {
           <input id="th-baseurl" class="form-input" type="text" value="https://api.tokenhot.ai/v1" />
         </div>
         <div>
-          <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:6px;">
+          <label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--text-secondary);margin-bottom:6px;">
             <b>② Default Model</b>（默认模型，可在课时中切换）
+            <button id="th-refresh-models" class="btn" style="padding:2px 10px;font-size:11px;line-height:1.4;">
+              <i class="fa-solid fa-rotate"></i> 拉取可用模型
+            </button>
           </label>
-          <input id="th-model" class="form-input" type="text" value="gpt-4o-mini" list="th-models-datalist" />
+          <select id="th-model-select" class="form-input" style="display:none;"></select>
+          <input id="th-model" class="form-input" type="text" value="gpt-4o-mini" list="th-models-datalist" placeholder="先填写并保存 Key 后点「拉取可用模型」" />
           <datalist id="th-models-datalist">
             ${TOKENHOT_MODELS.flatMap(g => g.models.map(m => `<option value="${m.id}">${m.label}</option>`)).join('')}
           </datalist>
+          <div id="th-model-info" style="font-size:11px;color:var(--text-muted);margin-top:4px;">未拉取真实清单时使用内置 30+ 推荐模型；建议先保存 Key 再点「拉取可用模型」获取 Tokenhot 实际支持的全部模型。</div>
         </div>
       </div>
 
@@ -219,6 +224,15 @@ function bindEvents() {
   document.getElementById('th-test')?.addEventListener('click', testConnection);
   document.getElementById('th-clear')?.addEventListener('click', clearKey);
   document.getElementById('th-enabled')?.addEventListener('change', () => saveConfig(false));
+  document.getElementById('th-refresh-models')?.addEventListener('click', refreshModelList);
+  document.getElementById('th-model-select')?.addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (v) {
+      const input = document.getElementById('th-model');
+      if (input) input.value = v;
+      window.OPC?.toast?.(`已选择模型：${v}，点击「保存配置」生效`, 'info');
+    }
+  });
 
   document.querySelectorAll('.th-model-item').forEach(item => {
     item.addEventListener('mouseenter', () => {
@@ -332,6 +346,91 @@ async function testConnection() {
       ❌ 测试失败：${e.message}<br>
       <span style="font-size:12px;color:#64748b;">请检查 ① API Key 是否正确 ② Base URL 是否为 <code>https://api.tokenhot.ai/v1</code> ③ 模型名是否在 Tokenhot 列表内</span>
     </div>`;
+  }
+}
+
+async function refreshModelList() {
+  const btn = document.getElementById('th-refresh-models');
+  const info = document.getElementById('th-model-info');
+  const select = document.getElementById('th-model-select');
+  const input = document.getElementById('th-model');
+  const result = document.getElementById('th-result');
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 拉取中...';
+  }
+  if (info) info.textContent = '⏳ 正在向 Tokenhot 网关请求 /models 列表...';
+
+  try {
+    // 如果用户刚刚输入了新 Key，先保存以确保后端用最新 Key 拉取
+    const apiKeyVal = document.getElementById('th-apikey').value.trim();
+    if (apiKeyVal) await saveConfig(false);
+
+    const res = await fetch('/api/ai/providers/tokenhot/models');
+    const json = await res.json();
+    if (!json.success) throw new Error(json.message);
+
+    const models = json.data.models || [];
+    if (!models.length) throw new Error('Tokenhot 返回的模型列表为空');
+
+    // 按 group 分组
+    const groups = {};
+    models.forEach(m => {
+      const g = m.group || '🧠 其他';
+      (groups[g] = groups[g] || []).push(m);
+    });
+
+    // 渲染 select（带 optgroup）
+    const currentVal = input?.value || 'gpt-4o-mini';
+    const matched = models.find(m => m.id === currentVal);
+    select.innerHTML = Object.entries(groups)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([g, list]) => `
+        <optgroup label="${g} (${list.length})">
+          ${list.map(m => `<option value="${m.id}" ${m.id === currentVal ? 'selected' : ''}>${m.id}${m.owned_by ? ' · ' + m.owned_by : ''}</option>`).join('')}
+        </optgroup>
+      `).join('');
+
+    // 显示 select，隐藏 input（保留 input 作为隐藏值同步）
+    select.style.display = 'block';
+    input.style.display = 'none';
+    if (!matched) {
+      // 当前值不在列表中，默认选第一个
+      const first = models[0].id;
+      select.value = first;
+      input.value = first;
+    }
+
+    if (info) {
+      info.innerHTML = `✅ 已拉取 <b>${models.length}</b> 个 Tokenhot 实际支持的模型，分 ${Object.keys(groups).length} 类。
+        <a href="#" id="th-back-input" style="color:var(--primary);margin-left:8px;">切回手填</a>`;
+    }
+    document.getElementById('th-back-input')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      select.style.display = 'none';
+      input.style.display = 'block';
+      info.textContent = '已切回手动输入模式。';
+    });
+
+    if (result) {
+      result.innerHTML = `<div style="background:#f0fdf4;border:1px solid #86efac;padding:10px;border-radius:8px;color:#166534;">
+        🎉 拉取到 <b>${models.length}</b> 个可用模型，已变为下拉菜单 ↑
+      </div>`;
+    }
+    window.OPC?.toast?.(`成功拉取 ${models.length} 个模型`, 'success');
+  } catch (e) {
+    if (info) info.innerHTML = `❌ <span style="color:var(--danger);">${e.message}</span>（请先保存有效的 API Key 再点拉取）`;
+    if (result) {
+      result.innerHTML = `<div style="background:#fef2f2;border:1px solid #fca5a5;padding:10px;border-radius:8px;color:#991b1b;">
+        ❌ 拉取失败：${e.message}
+      </div>`;
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-rotate"></i> 拉取可用模型';
+    }
   }
 }
 
