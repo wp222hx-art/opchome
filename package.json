@@ -1,0 +1,17 @@
+{
+  "name": "opc-management-platform",
+  "version": "2.0.0",
+  "description": "OPC社区一人公司学习与管理一体化平台 - 前端 + Mock API",
+  "main": "server/app.js",
+  "scripts": {
+    "start": "node server/app.js",
+    "dev": "node server/app.js"
+  },
+  "keywords": ["OPC", "AI", "Learning", "Community", "Management"],
+  "author": "OPC Community",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
+  }
+}
